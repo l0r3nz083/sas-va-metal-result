@@ -14,9 +14,9 @@
       --text: #111;
       --grid: #ead8d2;
 
-      --body-font: 11px;
-      --header-font: 10px;
-      --cell-py: 2px;
+      --body-font: 13px;
+      --header-font: 12px;
+      --cell-py: 3px;
       --cell-px: 5px;
     }
 
@@ -586,71 +586,70 @@
       - font/padding/altezza righe si riducono se il monitor è più piccolo
     */
     function fitTable() {
-      const host = document.getElementById("host");
-      const table = lastRenderedTable;
+  const host = document.getElementById("host");
+  const table = lastRenderedTable;
 
-      if (!host || !table) return;
+  if (!host || !table) return;
 
-      const width = Math.max(host.clientWidth, 1);
-      const height = Math.max(host.clientHeight, 1);
+  const width = Math.max(host.clientWidth, 1);
+  const height = Math.max(host.clientHeight, 1);
 
-      const rows = table.querySelectorAll("tr");
-      const rowCount = Math.max(rows.length, 1);
+  const rows = table.querySelectorAll("tr");
+  const rowCount = Math.max(rows.length, 1);
 
-      /*
-        Un piccolo margine evita che i bordi facciano comparire scroll.
-      */
-      const usableHeight = Math.max(height - 2, 1);
-      const targetRowHeight = usableHeight / rowCount;
+  const usableHeight = Math.max(height - 2, 1);
+  const targetRowHeight = usableHeight / rowCount;
 
-      /*
-        La dimensione del font dipende sia dalla larghezza
-        sia dall'altezza effettivamente disponibile.
-      */
-      const fontFromHeight = targetRowHeight * 0.48;
-      const fontFromWidth = width / 86;
+  /*
+    Versione meno aggressiva:
+    - font minimo più alto
+    - font massimo più alto
+    - meno compressione orizzontale
+  */
+  const fontFromHeight = targetRowHeight * 0.62;
+  const fontFromWidth = width / 68;
 
-      const bodyFont = Math.max(
-        7,
-        Math.min(
-          13,
-          fontFromHeight,
-          fontFromWidth
-        )
-      );
+  const bodyFont = Math.max(
+    9.5,
+    Math.min(
+      15,
+      fontFromHeight,
+      fontFromWidth
+    )
+  );
 
-      const headerFont = Math.max(
-        7,
-        Math.min(12, bodyFont * 0.95)
-      );
+  const headerFont = Math.max(
+    9,
+    Math.min(13.5, bodyFont * 0.95)
+  );
 
-      const verticalPadding = Math.max(
-        0,
-        Math.min(
-          4,
-          (targetRowHeight - bodyFont * 1.05) / 2
-        )
-      );
+  const verticalPadding = Math.max(
+    1,
+    Math.min(
+      4,
+      (targetRowHeight - bodyFont * 1.05) / 2
+    )
+  );
 
-      document.documentElement.style.setProperty(
-        "--body-font",
-        bodyFont.toFixed(2) + "px"
-      );
+  document.documentElement.style.setProperty(
+    "--body-font",
+    bodyFont.toFixed(2) + "px"
+  );
 
-      document.documentElement.style.setProperty(
-        "--header-font",
-        headerFont.toFixed(2) + "px"
-      );
+  document.documentElement.style.setProperty(
+    "--header-font",
+    headerFont.toFixed(2) + "px"
+  );
 
-      document.documentElement.style.setProperty(
-        "--cell-py",
-        verticalPadding.toFixed(2) + "px"
-      );
+  document.documentElement.style.setProperty(
+    "--cell-py",
+    verticalPadding.toFixed(2) + "px"
+  );
 
-      rows.forEach(row => {
-        row.style.height = targetRowHeight.toFixed(2) + "px";
-      });
-    }
+  rows.forEach(row => {
+    row.style.height = targetRowHeight.toFixed(2) + "px";
+  });
+}
 
     function render(message) {
       if (
