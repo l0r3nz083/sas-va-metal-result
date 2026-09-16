@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Metal Result Responsive Table</title>
+
+  <style>
+    :root {
+      --red: #d71920;
+      --red-dark: #c9141b;
+      --bg: #f7e9e4;
+      --bg-alt: #f3dfd8;
+      --text: #111;
+      --grid: #ead8d2;
+
+      --body-font: 11px;
+      --header-font: 10px;
+      --cell-py: 2px;
+      --cell-px: 5px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+    }
+
+    #host {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    table {
+      width: 100%;
+      height: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      background: var(--bg);
+    }
+
+    /*
+      Le larghezze sono percentuali e sommano a 100%.
+      In questo modo la tabella si restringe/allarga
+      insieme al riquadro SAS senza generare scroll orizzontale.
+    */
+    col.cartellino { width: 13%; }
+    col.articolo   { width: 20%; }
+    col.ton        { width: 14%; }
+    col.pct        { width: 9%;  }
+    col.target     { width: 14%; }
+    col.pcttarget  { width: 11%; }
+    col.delta      { width: 19%; }
+
+    th,
+    td {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: middle;
+      border-bottom: 1px solid var(--grid);
+      padding: var(--cell-py) var(--cell-px);
+      line-height: 1;
+    }
+
+    thead th {
+      background: var(--red);
+      color: #fff;
+      font-size: var(--header-font);
+      font-weight: 700;
+      text-align: center;
+      border-right: 1px solid rgba(255,255,255,0.28);
+    }
+
+    thead th:last-child {
+      border-right: 0;
+    }
+
+    tbody td {
+      background: var(--bg);
+      font-size: var(--body-font);
+    }
+
+    td.group-cell,
+    td.article-cell {
+      background: var(--red);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    td.group-cell {
+      text-align: left;
+    }
+
+    td.article-cell {
+      text-align: left;
+    }
+
+    td.number-cell {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    tr.subtotal-row td {
+      background: var(--red);
+      color: #fff;
+      font-weight: 700;
+      border-bottom-color: rgba(255,255,255,0.25);
+    }
+
+    tr.subtotal-row td.subtotal-label {
+      text-align: left;
+    }
+
+    tr.subtotal-row td.number-cell {
+      text-align: right;
+    }
+
+    /*
+      Se il riquadro diventa molto stretto,
+      riduciamo leggermente il padding orizzontale.
+    */
+    @media (max-width: 900px) {
+      :root {
+        --cell-px: 3px;
+      }
+    }
+
+    @media (max-width: 700px) {
+      :root {
+        --cell-px: 2px;
+      }
+    }
+
+    #status {
+      display: none;
+      width: 100%;
+      height: 100%;
+      padding: 10px;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #666;
+      background: var(--bg);
+      font-size: 12px;
+    }
+
+    #status.visible {
+      display: flex;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="host">
+    <div id="status"></div>
+  </div>
+
+  <script>
+    "use strict";
+
+    /*
+      Questo file è pensato per essere riutilizzato sia per la tabella
+      sinistra sia per la tabella destra di SAS Visual Analytics.
+      I filtri applicati all'oggetto SAS decidono quali CARTELLINO arrivano.
+    */
+
+    const GROUP_ORDER = [
+      "DHP",
+      "ETP",
+      "OT X",
+      "SIMILORO",
+      "OTTONE 66"
+    ];
+
+    const REQUIRED_COLUMNS = {
+      group:      ["CARTELLINO"],
+      article:    ["ARTICOLO"],
+      loaded:     ["TON_CARICATE", "TON CARICATE"],
+      percentage:["%", "PERCENTUALE"],
+      target:     ["TON_TARGET", "TON TARGET"],
+      targetPct:  ["%_TARGET", "% TARGET", "%TARGET"],
+      delta:      ["ACTUAL-TARGET", "ACTUAL_TARGET", "ACTUAL TARGET"]
+    };
+
+    let lastRenderedTable = null;
+
+    function normalizeName(value) {
+      return String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, " ");
+    }
+
+    function findColumnIndex(columns, wantedLabels) {
+      const wanted = wantedLabels.map(normalizeName);
+
+      for (let i = 0; i < columns.length; i++) {
+        const col = columns[i] || {};
+
+        const candidates = [
+          col.label,
+          col.name,
+          col.dataItemName,
+          col.dataItemLabel
+        ].filter(v => v !== undefined && v !== null);
+
+        for (const candidate of candidates) {
+          if (wanted.includes(normalizeName(candidate))) {
+            return i;
+          }
+        }
+      }
+
+      return -1;
+    }
+
+    function parseItalianNumber(value) {
+      if (typeof value === "number") {
+        return Number.isFinite(value) ? value : NaN;
+      }
+
+      if (value === null || value === undefined) {
+        return NaN;
+      }
+
+      let text = String(value).trim();
+
+      if (!text) {
+        return NaN;
+      }
+
+      text = text.replace(/\s/g, "").replace(/%/g, "");
+
+      /*
+        Gestione robusta:
+        1.234,56 -> 1234.56
+        1234,56  -> 1234.56
+        1234.56  -> 1234.56
+      */
+      if (text.includes(",") && text.includes(".")) {
+        if (text.lastIndexOf(",") > text.lastIndexOf(".")) {
+          text = text.replace(/\./g, "").replace(",", ".");
+        } else {
+          text = text.replace(/,/g, "");
+        }
+      } else if (text.includes(",")) {
+        text = text.replace(",", ".");
+      }
+
+      const number = Number(text);
+      return Number.isFinite(number) ? number : NaN;
+    }
+
+    /*
+      Converte una percentuale in "punti percentuali".
+      Esempi:
+        0.42    -> 42
+        "42%"   -> 42
+        42      -> 42
+        1.2     -> 120   (tipico valore SAS per 120%)
+    */
+    function toPercentPoints(value) {
+      if (typeof value === "string" && value.includes("%")) {
+        return parseItalianNumber(value);
+      }
+
+      const number = parseItalianNumber(value);
+
+      if (!Number.isFinite(number)) {
+        return NaN;
+      }
+
+      if (Math.abs(number) <= 1.5) {
+        return number * 100;
+      }
+
+      return number;
+    }
+
+    function formatNumber(value) {
+      if (!Number.isFinite(value)) return "";
+
+      return new Intl.NumberFormat("it-IT", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      }).format(value);
+    }
+
+    function formatPercent(points) {
+      if (!Number.isFinite(points)) return "";
+
+      return new Intl.NumberFormat("it-IT", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1
+      }).format(points) + "%";
+    }
+
+    function groupRank(name) {
+      const normalized = normalizeName(name);
+      const index = GROUP_ORDER.indexOf(normalized);
+      return index === -1 ? 999 : index;
+    }
+
+    function showStatus(text) {
+      const host = document.getElementById("host");
+      host.innerHTML = "";
+
+      const status = document.createElement("div");
+      status.id = "status";
+      status.className = "visible";
+      status.textContent = text;
+
+      host.appendChild(status);
+      lastRenderedTable = null;
+    }
+
+    function getIndexes(columns) {
+      return {
+        group:      findColumnIndex(columns, REQUIRED_COLUMNS.group),
+        article:    findColumnIndex(columns, REQUIRED_COLUMNS.article),
+        loaded:     findColumnIndex(columns, REQUIRED_COLUMNS.loaded),
+        percentage: findColumnIndex(columns, REQUIRED_COLUMNS.percentage),
+        target:     findColumnIndex(columns, REQUIRED_COLUMNS.target),
+        targetPct:  findColumnIndex(columns, REQUIRED_COLUMNS.targetPct),
+        delta:      findColumnIndex(columns, REQUIRED_COLUMNS.delta)
+      };
+    }
+
+    function hasAllIndexes(indexes) {
+      return Object.values(indexes).every(index => index >= 0);
+    }
+
+    /*
+      Se SAS dovesse inviare più righe con lo stesso
+      CARTELLINO + ARTICOLO, vengono aggregate.
+    */
+    function buildGroups(message, indexes) {
+      const aggregate = new Map();
+
+      message.data.forEach((row, rowIndex) => {
+        const group = String(row[indexes.group] ?? "").trim();
+        const article = String(row[indexes.article] ?? "").trim();
+
+        if (!group || !article) return;
+
+        const key = normalizeName(group) + "||" + normalizeName(article);
+
+        const loaded = parseItalianNumber(row[indexes.loaded]);
+        const percentage = toPercentPoints(row[indexes.percentage]);
+        const target = parseItalianNumber(row[indexes.target]);
+        const targetPct = toPercentPoints(row[indexes.targetPct]);
+        const delta = parseItalianNumber(row[indexes.delta]);
+
+        if (!aggregate.has(key)) {
+          aggregate.set(key, {
+            group,
+            article,
+            firstRowIndex: rowIndex,
+            loaded: 0,
+            percentage: 0,
+            target: 0,
+            targetPct: 0,
+            delta: 0
+          });
+        }
+
+        const item = aggregate.get(key);
+
+        if (Number.isFinite(loaded)) item.loaded += loaded;
+        if (Number.isFinite(percentage)) item.percentage += percentage;
+        if (Number.isFinite(target)) item.target += target;
+        if (Number.isFinite(targetPct)) item.targetPct += targetPct;
+        if (Number.isFinite(delta)) item.delta += delta;
+      });
+
+      const rows = Array.from(aggregate.values());
+
+      /*
+        Ordine gruppi fisso; ordine articoli uguale a quello
+        ricevuto da SAS.
+      */
+      rows.sort((a, b) => {
+        const groupDiff = groupRank(a.group) - groupRank(b.group);
+
+        if (groupDiff !== 0) return groupDiff;
+
+        return a.firstRowIndex - b.firstRowIndex;
+      });
+
+      const groups = [];
+      const byName = new Map();
+
+      rows.forEach(item => {
+        const key = normalizeName(item.group);
+
+        if (!byName.has(key)) {
+          const group = {
+            name: item.group,
+            firstRowIndex: item.firstRowIndex,
+            rows: []
+          };
+
+          byName.set(key, group);
+          groups.push(group);
+        }
+
+        byName.get(key).rows.push(item);
+      });
+
+      return groups;
+    }
+
+    function sumGroupRows(rows) {
+      return rows.reduce((acc, row) => {
+        acc.loaded += row.loaded;
+        acc.percentage += row.percentage;
+        acc.target += row.target;
+        acc.targetPct += row.targetPct;
+        acc.delta += row.delta;
+        return acc;
+      }, {
+        loaded: 0,
+        percentage: 0,
+        target: 0,
+        targetPct: 0,
+        delta: 0
+      });
+    }
+
+    function createCell(tag, text, className = "") {
+      const cell = document.createElement(tag);
+
+      if (className) {
+        cell.className = className;
+      }
+
+      cell.textContent = text;
+      return cell;
+    }
+
+    function buildTable(groups) {
+      const table = document.createElement("table");
+
+      const colgroup = document.createElement("colgroup");
+
+      [
+        ["cartellino", "cartellino"],
+        ["articolo", "articolo"],
+        ["ton", "ton"],
+        ["pct", "pct"],
+        ["target", "target"],
+        ["pcttarget", "pcttarget"],
+        ["delta", "delta"]
+      ].forEach(([className]) => {
+        const col = document.createElement("col");
+        col.className = className;
+        colgroup.appendChild(col);
+      });
+
+      table.appendChild(colgroup);
+
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+
+      [
+        "CARTELLINO",
+        "ARTICOLO",
+        "TON_CARICATE",
+        "%",
+        "TON_TARGET",
+        "%_TARGET",
+        "ACTUAL-TARGET"
+      ].forEach(label => {
+        headRow.appendChild(createCell("th", label));
+      });
+
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+
+      groups.forEach(group => {
+        group.rows.forEach((item, rowIndex) => {
+          const tr = document.createElement("tr");
+
+          if (rowIndex === 0) {
+            const groupCell = createCell(
+              "td",
+              group.name,
+              "group-cell"
+            );
+
+            groupCell.rowSpan = group.rows.length;
+            tr.appendChild(groupCell);
+          }
+
+          tr.appendChild(
+            createCell("td", item.article, "article-cell")
+          );
+
+          tr.appendChild(
+            createCell("td", formatNumber(item.loaded), "number-cell")
+          );
+
+          tr.appendChild(
+            createCell("td", formatPercent(item.percentage), "number-cell")
+          );
+
+          tr.appendChild(
+            createCell("td", formatNumber(item.target), "number-cell")
+          );
+
+          tr.appendChild(
+            createCell("td", formatPercent(item.targetPct), "number-cell")
+          );
+
+          tr.appendChild(
+            createCell("td", formatNumber(item.delta), "number-cell")
+          );
+
+          tbody.appendChild(tr);
+        });
+
+        const total = sumGroupRows(group.rows);
+
+        const subtotalRow = document.createElement("tr");
+        subtotalRow.className = "subtotal-row";
+
+        const subtotalLabel = createCell(
+          "td",
+          "Sottototale: " + group.name,
+          "subtotal-label"
+        );
+
+        subtotalLabel.colSpan = 2;
+
+        subtotalRow.appendChild(subtotalLabel);
+
+        subtotalRow.appendChild(
+          createCell("td", formatNumber(total.loaded), "number-cell")
+        );
+
+        subtotalRow.appendChild(
+          createCell("td", formatPercent(total.percentage), "number-cell")
+        );
+
+        subtotalRow.appendChild(
+          createCell("td", formatNumber(total.target), "number-cell")
+        );
+
+        subtotalRow.appendChild(
+          createCell("td", formatPercent(total.targetPct), "number-cell")
+        );
+
+        subtotalRow.appendChild(
+          createCell("td", formatNumber(total.delta), "number-cell")
+        );
+
+        tbody.appendChild(subtotalRow);
+      });
+
+      table.appendChild(tbody);
+
+      return table;
+    }
+
+    /*
+      Adatta font e altezza righe allo spazio reale del riquadro SAS.
+      Questo è il punto chiave che evita le scrollbar:
+      - la tabella resta sempre larga 100%
+      - le colonne hanno larghezze percentuali
+      - font/padding/altezza righe si riducono se il monitor è più piccolo
+    */
+    function fitTable() {
+      const host = document.getElementById("host");
+      const table = lastRenderedTable;
+
+      if (!host || !table) return;
+
+      const width = Math.max(host.clientWidth, 1);
+      const height = Math.max(host.clientHeight, 1);
+
+      const rows = table.querySelectorAll("tr");
+      const rowCount = Math.max(rows.length, 1);
+
+      /*
+        Un piccolo margine evita che i bordi facciano comparire scroll.
+      */
+      const usableHeight = Math.max(height - 2, 1);
+      const targetRowHeight = usableHeight / rowCount;
+
+      /*
+        La dimensione del font dipende sia dalla larghezza
+        sia dall'altezza effettivamente disponibile.
+      */
+      const fontFromHeight = targetRowHeight * 0.48;
+      const fontFromWidth = width / 86;
+
+      const bodyFont = Math.max(
+        7,
+        Math.min(
+          13,
+          fontFromHeight,
+          fontFromWidth
+        )
+      );
+
+      const headerFont = Math.max(
+        7,
+        Math.min(12, bodyFont * 0.95)
+      );
+
+      const verticalPadding = Math.max(
+        0,
+        Math.min(
+          4,
+          (targetRowHeight - bodyFont * 1.05) / 2
+        )
+      );
+
+      document.documentElement.style.setProperty(
+        "--body-font",
+        bodyFont.toFixed(2) + "px"
+      );
+
+      document.documentElement.style.setProperty(
+        "--header-font",
+        headerFont.toFixed(2) + "px"
+      );
+
+      document.documentElement.style.setProperty(
+        "--cell-py",
+        verticalPadding.toFixed(2) + "px"
+      );
+
+      rows.forEach(row => {
+        row.style.height = targetRowHeight.toFixed(2) + "px";
+      });
+    }
+
+    function render(message) {
+      if (
+        !message ||
+        !Array.isArray(message.data) ||
+        !Array.isArray(message.columns)
+      ) {
+        return;
+      }
+
+      const indexes = getIndexes(message.columns);
+
+      if (!hasAllIndexes(indexes)) {
+        showStatus(
+          "Mancano uno o più campi richiesti: CARTELLINO, ARTICOLO, TON_CARICATE, %, TON_TARGET, %_TARGET, ACTUAL-TARGET."
+        );
+        return;
+      }
+
+      const groups = buildGroups(message, indexes);
+
+      if (!groups.length) {
+        showStatus("Nessun dato da visualizzare.");
+        return;
+      }
+
+      const host = document.getElementById("host");
+      host.innerHTML = "";
+
+      const table = buildTable(groups);
+      host.appendChild(table);
+
+      lastRenderedTable = table;
+
+      requestAnimationFrame(() => {
+        fitTable();
+        requestAnimationFrame(fitTable);
+      });
+    }
+
+    function onMessage(event) {
+      if (!event || !event.data) return;
+
+      const message = event.data;
+
+      if (
+        !Array.isArray(message.data) ||
+        !Array.isArray(message.columns)
+      ) {
+        return;
+      }
+
+      render(message);
+    }
+
+    window.addEventListener("message", onMessage, false);
+    window.addEventListener("resize", fitTable);
+
+    if ("ResizeObserver" in window) {
+      const observer = new ResizeObserver(() => {
+        fitTable();
+      });
+
+      observer.observe(document.getElementById("host"));
+    }
+  </script>
+</body>
+</html>
