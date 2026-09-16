@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>SAS VA Summary Table</title>
+
+  <style>
+    :root {
+      --red: #d71920;
+      --bg: #f7e9e4;
+      --grid: #ead8d2;
+      --text: #111;
+      --body-font: 14px;
+      --header-font: 13.5px;
+      --cell-py: 3px;
+      --cell-px: 7px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+    }
+
+    #host {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    table {
+      width: 100%;
+      height: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      background: var(--bg);
+    }
+
+    th, td {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: middle;
+      border-bottom: 1px solid var(--grid);
+      padding: var(--cell-py) var(--cell-px);
+      line-height: 1.05;
+    }
+
+    thead th {
+      background: var(--red);
+      color: #fff;
+      font-size: var(--header-font);
+      font-weight: 700;
+      text-align: center;
+      border-right: 1px solid rgba(255,255,255,0.28);
+    }
+
+    tbody td {
+      background: var(--bg);
+      font-size: var(--body-font);
+    }
+
+    tbody td.category-cell {
+      background: var(--red);
+      color: #fff;
+      font-weight: 700;
+      text-align: left;
+    }
+
+    tbody td.number-cell {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #status {
+      display: none;
+      width: 100%;
+      height: 100%;
+      padding: 12px;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #666;
+      background: var(--bg);
+      font-size: 13px;
+    }
+
+    #status.visible { display: flex; }
+
+    @media (max-width: 800px) {
+      :root { --cell-px: 4px; }
+    }
+
+    @media (max-width: 600px) {
+      :root { --cell-px: 2px; }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="host"><div id="status"></div></div>
+
+  <script>
+    "use strict";
+
+    /*
+      Un solo componente per le tre tabelle METAL_SUMMARY_ARTICLE.
+
+      Schema 1:
+      GRUPPO_ARTICOLO | TON | % | % ANNO PREC
+
+      Schema 2:
+      GRUPPO_ARTICOLO | TON | RIPR_ANNO_PREC | DELTA_TON
+
+      Schema 3:
+      CARTELLINO | TON | % MESE | ANNO PREC | % ANNO PREC
+
+      Nessuna misura viene ricalcolata: i valori sono solo formattati.
+    */
+
+    let lastRenderedTable = null;
+
+    const SCHEMAS = [
+      {
+        id: "article_share",
+        columns: [
+          { aliases: ["GRUPPO_ARTICOLO"], label: "GRUPPO_ARTICOLO", type: "category", width: 40 },
+          { aliases: ["TON"], label: "TON", type: "number", width: 20 },
+          { aliases: ["%"], label: "%", type: "percent", width: 20 },
+          { aliases: ["% ANNO PREC", "%_ANNO_PREC"], label: "% ANNO PREC", type: "percent", width: 20 }
+        ]
+      },
+      {
+        id: "article_delta",
+        columns: [
+          { aliases: ["GRUPPO_ARTICOLO"], label: "GRUPPO_ARTICOLO", type: "category", width: 40 },
+          { aliases: ["TON"], label: "TON", type: "number", width: 20 },
+          { aliases: ["RIPR_ANNO_PREC", "RIPR ANNO PREC"], label: "RIPR_ANNO_PREC", type: "number", width: 20 },
+          { aliases: ["DELTA_TON", "DELTA TON"], label: "DELTA_TON", type: "number", width: 20 }
+        ]
+      },
+      {
+        id: "cartellino_compare",
+        columns: [
+          { aliases: ["CARTELLINO"], label: "CARTELLINO", type: "category", width: 28 },
+          { aliases: ["TON"], label: "TON", type: "number", width: 18 },
+          { aliases: ["% MESE", "%_MESE"], label: "% MESE", type: "percent", width: 18 },
+          { aliases: ["ANNO PREC", "ANNO_PREC"], label: "ANNO PREC", type: "number", width: 18 },
+          { aliases: ["% ANNO PREC", "%_ANNO_PREC"], label: "% ANNO PREC", type: "percent", width: 18 }
+        ]
+      }
+    ];
+
+    function normalizeName(value) {
+      return String(value ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+    }
+
+    function candidateNames(column) {
+      const col = column || {};
+      return [col.label, col.name, col.dataItemName, col.dataItemLabel]
+        .filter(v => v !== undefined && v !== null)
+        .map(normalizeName);
+    }
+
+    function findColumnIndex(columns, aliases) {
+      const wanted = aliases.map(normalizeName);
+      for (let i = 0; i < columns.length; i++) {
+        const names = candidateNames(columns[i]);
+        if (names.some(name => wanted.includes(name))) return i;
+      }
+      return -1;
+    }
+
+    function detectSchema(columns) {
+      for (const schema of SCHEMAS) {
+        const indexes = schema.columns.map(def => findColumnIndex(columns, def.aliases));
+        if (indexes.every(index => index >= 0)) return { schema, indexes };
+      }
+      return null;
+    }
+
+    function parseNumber(value) {
+      if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+      if (value === null || value === undefined) return NaN;
+
+      let text = String(value).trim();
+      if (!text) return NaN;
+
+      text = text.replace(/\s/g, "").replace(/%/g, "");
+
+      if (text.includes(",") && text.includes(".")) {
+        if (text.lastIndexOf(",") > text.lastIndexOf(".")) {
+          text = text.replace(/\./g, "").replace(",", ".");
+        } else {
+          text = text.replace(/,/g, "");
+        }
+      } else if (text.includes(",")) {
+        text = text.replace(",", ".");
+      }
+
+      const number = Number(text);
+      return Number.isFinite(number) ? number : NaN;
+    }
+
+    function formatInteger(value) {
+      if (value === null || value === undefined || value === "") return "";
+      const number = parseNumber(value);
+      if (!Number.isFinite(number)) return String(value);
+
+      return new Intl.NumberFormat("it-IT", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+      }).format(number);
+    }
+
+    function formatPercent(value) {
+      if (value === null || value === undefined || value === "") return "";
+
+      if (typeof value === "string" && value.includes("%")) {
+        return value.trim();
+      }
+
+      const number = parseNumber(value);
+      if (!Number.isFinite(number)) return String(value);
+
+      return new Intl.NumberFormat("it-IT", {
+        style: "percent",
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1
+      }).format(number);
+    }
+
+    function formatValue(value, type) {
+      if (type === "number") return formatInteger(value);
+      if (type === "percent") return formatPercent(value);
+      return String(value ?? "").trim();
+    }
+
+    function showStatus(text) {
+      const host = document.getElementById("host");
+      host.innerHTML = "";
+      const status = document.createElement("div");
+      status.id = "status";
+      status.className = "visible";
+      status.textContent = text;
+      host.appendChild(status);
+      lastRenderedTable = null;
+    }
+
+    function createCell(tag, text, className = "") {
+      const cell = document.createElement(tag);
+      if (className) cell.className = className;
+      cell.textContent = text;
+      return cell;
+    }
+
+    function buildTable(message, detected) {
+      const { schema, indexes } = detected;
+      const table = document.createElement("table");
+
+      const colgroup = document.createElement("colgroup");
+      schema.columns.forEach(def => {
+        const col = document.createElement("col");
+        col.style.width = def.width + "%";
+        colgroup.appendChild(col);
+      });
+      table.appendChild(colgroup);
+
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      schema.columns.forEach(def => headRow.appendChild(createCell("th", def.label)));
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+
+      message.data.forEach(row => {
+        const values = indexes.map(index => row[index]);
+        const hasContent = values.some(value =>
+          value !== null &&
+          value !== undefined &&
+          String(value).trim() !== ""
+        );
+        if (!hasContent) return;
+
+        const tr = document.createElement("tr");
+
+        schema.columns.forEach((def, columnIndex) => {
+          const text = formatValue(values[columnIndex], def.type);
+          const className = def.type === "category" ? "category-cell" : "number-cell";
+          tr.appendChild(createCell("td", text, className));
+        });
+
+        tbody.appendChild(tr);
+      });
+
+      table.appendChild(tbody);
+      return table;
+    }
+
+    function fitTable() {
+      const host = document.getElementById("host");
+      const table = lastRenderedTable;
+      if (!host || !table) return;
+
+      const height = Math.max(host.clientHeight, 1);
+      const rows = table.querySelectorAll("tr");
+      const rowCount = Math.max(rows.length, 1);
+
+      const usableHeight = Math.max(height - 2, 1);
+      const targetRowHeight = usableHeight / rowCount;
+
+      const bodyFont = 14;
+      const headerFont = 13.5;
+
+      const verticalPadding = Math.max(
+        0,
+        Math.min(
+          5,
+          (targetRowHeight - bodyFont * 1.05) / 2
+        )
+      );
+
+      document.documentElement.style.setProperty("--body-font", bodyFont + "px");
+      document.documentElement.style.setProperty("--header-font", headerFont + "px");
+      document.documentElement.style.setProperty("--cell-py", verticalPadding.toFixed(2) + "px");
+
+      rows.forEach(row => {
+        row.style.height = targetRowHeight.toFixed(2) + "px";
+      });
+    }
+
+    function render(message) {
+      if (!message || !Array.isArray(message.data) || !Array.isArray(message.columns)) return;
+
+      const detected = detectSchema(message.columns);
+
+      if (!detected) {
+        showStatus("Schema dati non riconosciuto. Verifica i Ruoli dati assegnati all'oggetto.");
+        return;
+      }
+
+      const host = document.getElementById("host");
+      host.innerHTML = "";
+
+      const table = buildTable(message, detected);
+
+      if (!table.querySelector("tbody tr")) {
+        showStatus("Nessun dato da visualizzare.");
+        return;
+      }
+
+      host.appendChild(table);
+      lastRenderedTable = table;
+
+      requestAnimationFrame(() => {
+        fitTable();
+        requestAnimationFrame(fitTable);
+      });
+    }
+
+    function onMessage(event) {
+      if (!event || !event.data) return;
+      const message = event.data;
+      if (!Array.isArray(message.data) || !Array.isArray(message.columns)) return;
+      render(message);
+    }
+
+    window.addEventListener("message", onMessage, false);
+    window.addEventListener("resize", fitTable);
+
+    if ("ResizeObserver" in window) {
+      const observer = new ResizeObserver(fitTable);
+      observer.observe(document.getElementById("host"));
+    }
+  </script>
+</body>
+</html>
