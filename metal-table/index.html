@@ -591,7 +591,6 @@
 
   if (!host || !table) return;
 
-  const width = Math.max(host.clientWidth, 1);
   const height = Math.max(host.clientHeight, 1);
 
   const rows = table.querySelectorAll("tr");
@@ -601,44 +600,31 @@
   const targetRowHeight = usableHeight / rowCount;
 
   /*
-    Font più grande rispetto alla versione precedente.
+    FONT UGUALE PER TUTTE LE TABELLE.
+    Non dipende più dalla larghezza/altezza dell'iframe.
   */
-  const fontFromHeight = targetRowHeight * 0.70;
-  const fontFromWidth = width / 61;
+  const bodyFont = 12.5;
+  const headerFont = 12;
 
-  const bodyFont = Math.max(
-    10.5,
-    Math.min(
-      16,
-      fontFromHeight,
-      fontFromWidth
-    )
-  );
-
-  const headerFont = Math.max(
-    10,
-    Math.min(
-      14.5,
-      bodyFont * 0.96
-    )
-  );
-
+  /*
+    Il padding verticale si adatta invece allo spazio disponibile.
+  */
   const verticalPadding = Math.max(
-    0.5,
+    0,
     Math.min(
-      3,
-      (targetRowHeight - bodyFont * 1.02) / 2
+      4,
+      (targetRowHeight - bodyFont * 1.05) / 2
     )
   );
 
   document.documentElement.style.setProperty(
     "--body-font",
-    bodyFont.toFixed(2) + "px"
+    bodyFont + "px"
   );
 
   document.documentElement.style.setProperty(
     "--header-font",
-    headerFont.toFixed(2) + "px"
+    headerFont + "px"
   );
 
   document.documentElement.style.setProperty(
