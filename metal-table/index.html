@@ -14,8 +14,8 @@
       --text: #111;
       --grid: #ead8d2;
 
-      --body-font: 13px;
-      --header-font: 12px;
+      --body-font: 14px;
+      --header-font: 13px;
       --cell-py: 3px;
       --cell-px: 5px;
     }
@@ -601,33 +601,33 @@
   const targetRowHeight = usableHeight / rowCount;
 
   /*
-    Versione meno aggressiva:
-    - font minimo più alto
-    - font massimo più alto
-    - meno compressione orizzontale
+    Font più grande rispetto alla versione precedente.
   */
-  const fontFromHeight = targetRowHeight * 0.62;
-  const fontFromWidth = width / 68;
+  const fontFromHeight = targetRowHeight * 0.70;
+  const fontFromWidth = width / 61;
 
   const bodyFont = Math.max(
-    9.5,
+    10.5,
     Math.min(
-      15,
+      16,
       fontFromHeight,
       fontFromWidth
     )
   );
 
   const headerFont = Math.max(
-    9,
-    Math.min(13.5, bodyFont * 0.95)
+    10,
+    Math.min(
+      14.5,
+      bodyFont * 0.96
+    )
   );
 
   const verticalPadding = Math.max(
-    1,
+    0.5,
     Math.min(
-      4,
-      (targetRowHeight - bodyFont * 1.05) / 2
+      3,
+      (targetRowHeight - bodyFont * 1.02) / 2
     )
   );
 
