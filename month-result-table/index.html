@@ -94,9 +94,14 @@
     }
 
     tr.total-row td {
+      background: var(--bg-total);
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    tr.total-row td.row-label {
       background: var(--red);
       color: #fff;
-      font-weight: 700;
     }
 
     #status {
@@ -130,12 +135,33 @@
   <script>
     "use strict";
 
-    const MONTH_ORDER = [
+    /*
+      Componente unico per tutte le tabelle mensili viste finora.
+
+      Supporta:
+      1) MESE_NOME + CARTELLINO + RISULTATO_METALLO
+      2) MESE_KEY  + CARTELLINO + TON
+      3) MESE_KEY  + GRUPPO_ARTICOLO + TON
+      4) MESE_KEY  + GRUPPO_ARTICOLO + misura con label "."
+         oppure, più in generale, l'unica misura residua presente.
+
+      I valori della misura non vengono ricalcolati:
+      vengono solo impaginati nella matrice mese x riga.
+      I totali sono la somma dei valori visualizzati.
+    */
+
+    const MONTH_NAME_ORDER = [
       "GENNAIO","FEBBRAIO","MARZO","APRILE","MAGGIO","GIUGNO",
       "LUGLIO","AGOSTO","SETTEMBRE","OTTOBRE","NOVEMBRE","DICEMBRE"
     ];
 
-    const ROW_ORDER = ["DHP","ETP","OT X","OTTONE 66","SIMILORO"];
+    const KNOWN_ROW_ORDER = [
+      "DHP",
+      "ETP",
+      "OT X",
+      "OTTONE 66",
+      "SIMILORO"
+    ];
 
     let lastRenderedTable = null;
 
@@ -152,11 +178,101 @@
 
     function findColumnIndex(columns, aliases) {
       const wanted = aliases.map(normalizeName);
+
       for (let i = 0; i < columns.length; i++) {
         const names = candidateNames(columns[i]);
         if (names.some(name => wanted.includes(name))) return i;
       }
+
       return -1;
+    }
+
+    function findFallbackMeasureIndex(columns, excludedIndexes) {
+      const excluded = new Set(excludedIndexes.filter(i => i >= 0));
+
+      /*
+        Preferenza esplicita per una misura chiamata "."
+      */
+      const dotIndex = findColumnIndex(columns, ["."]);
+      if (dotIndex >= 0 && !excluded.has(dotIndex)) return dotIndex;
+
+      /*
+        Se dopo mese e riga rimane una sola colonna, la usiamo come misura.
+      */
+      const remaining = [];
+
+      for (let i = 0; i < columns.length; i++) {
+        if (!excluded.has(i)) remaining.push(i);
+      }
+
+      return remaining.length === 1 ? remaining[0] : -1;
+    }
+
+    function detectSchema(columns) {
+      const monthNameIndex = findColumnIndex(columns, ["MESE_NOME", "MESE NOME"]);
+      const monthKeyIndex  = findColumnIndex(columns, ["MESE_KEY", "MESE KEY"]);
+
+      const cartellinoIndex = findColumnIndex(columns, ["CARTELLINO"]);
+      const gruppoIndex     = findColumnIndex(columns, ["GRUPPO_ARTICOLO", "GRUPPO ARTICOLO"]);
+
+      const risultatoIndex = findColumnIndex(
+        columns,
+        ["RISULTATO_METALLO", "RISULTATO METALLO"]
+      );
+
+      const tonIndex = findColumnIndex(columns, ["TON"]);
+
+      /*
+        Schema Month MR.
+      */
+      if (monthNameIndex >= 0 && cartellinoIndex >= 0 && risultatoIndex >= 0) {
+        return {
+          monthIndex: monthNameIndex,
+          rowIndex: cartellinoIndex,
+          valueIndex: risultatoIndex,
+          monthType: "name",
+          rowLabel: "CARTELLINO"
+        };
+      }
+
+      /*
+        Schema mensile con MESE_KEY e CARTELLINO.
+      */
+      if (monthKeyIndex >= 0 && cartellinoIndex >= 0 && tonIndex >= 0) {
+        return {
+          monthIndex: monthKeyIndex,
+          rowIndex: cartellinoIndex,
+          valueIndex: tonIndex,
+          monthType: "key",
+          rowLabel: "CARTELLINO"
+        };
+      }
+
+      /*
+        Schema mensile con MESE_KEY e GRUPPO_ARTICOLO.
+      */
+      if (monthKeyIndex >= 0 && gruppoIndex >= 0) {
+        let valueIndex = tonIndex;
+
+        if (valueIndex < 0) {
+          valueIndex = findFallbackMeasureIndex(
+            columns,
+            [monthKeyIndex, gruppoIndex]
+          );
+        }
+
+        if (valueIndex >= 0) {
+          return {
+            monthIndex: monthKeyIndex,
+            rowIndex: gruppoIndex,
+            valueIndex,
+            monthType: "key",
+            rowLabel: "GRUPPO_ARTICOLO"
+          };
+        }
+      }
+
+      return null;
     }
 
     function parseNumber(value) {
@@ -164,7 +280,7 @@
       if (value === null || value === undefined) return NaN;
 
       let text = String(value).trim();
-      if (!text) return NaN;
+      if (!text || text === "—") return NaN;
 
       text = text.replace(/\s/g, "");
 
@@ -184,34 +300,53 @@
 
     function formatInteger(value) {
       if (!Number.isFinite(value)) return "";
+
       return new Intl.NumberFormat("it-IT", {
         minimumFractionDigits: 0,
         maximumFractionDigits: 0
       }).format(value);
     }
 
-    function monthRank(month) {
-      const i = MONTH_ORDER.indexOf(normalizeName(month));
-      return i === -1 ? 999 : i;
+    function monthRank(month, monthType) {
+      const normalized = normalizeName(month);
+
+      if (monthType === "key") {
+        const n = Number(normalized);
+        return Number.isFinite(n) ? n : 999;
+      }
+
+      const i = MONTH_NAME_ORDER.indexOf(normalized);
+      return i === -1 ? 999 : i + 1;
     }
 
     function rowRank(name) {
-      const i = ROW_ORDER.indexOf(normalizeName(name));
+      const i = KNOWN_ROW_ORDER.indexOf(normalizeName(name));
       return i === -1 ? 999 : i;
     }
 
-    function monthDisplayName(month) {
+    function monthDisplay(month, monthType) {
       const text = String(month ?? "").trim();
-      return text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : "";
+
+      if (monthType === "key") {
+        const n = Number(text);
+        if (Number.isFinite(n)) return String(n).padStart(2, "0");
+        return text;
+      }
+
+      return text
+        ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase()
+        : "";
     }
 
     function showStatus(text) {
       const host = document.getElementById("host");
       host.innerHTML = "";
+
       const status = document.createElement("div");
       status.id = "status";
       status.className = "visible";
       status.textContent = text;
+
       host.appendChild(status);
       lastRenderedTable = null;
     }
@@ -223,53 +358,67 @@
       return cell;
     }
 
-    function buildMatrix(message, monthIndex, rowIndex, valueIndex) {
+    function buildMatrix(message, schema) {
       const rowMap = new Map();
       const monthSet = new Set();
 
       message.data.forEach((row, sourceIndex) => {
-        const month = String(row[monthIndex] ?? "").trim();
-        const rowName = String(row[rowIndex] ?? "").trim();
-        const value = parseNumber(row[valueIndex]);
+        const month = String(row[schema.monthIndex] ?? "").trim();
+        const rowName = String(row[schema.rowIndex] ?? "").trim();
+        const value = parseNumber(row[schema.valueIndex]);
 
         if (!month || !rowName || !Number.isFinite(value)) return;
 
         const m = normalizeName(month);
         const r = normalizeName(rowName);
+
         monthSet.add(m);
 
         if (!rowMap.has(r)) {
-          rowMap.set(r, { name: rowName, firstIndex: sourceIndex, values: new Map() });
+          rowMap.set(r, {
+            name: rowName,
+            firstIndex: sourceIndex,
+            values: new Map()
+          });
         }
 
         const item = rowMap.get(r);
         item.values.set(m, (item.values.get(m) || 0) + value);
       });
 
-      const months = Array.from(monthSet).sort((a,b) => {
-        const d = monthRank(a) - monthRank(b);
+      const months = Array.from(monthSet).sort((a, b) => {
+        const d = monthRank(a, schema.monthType) - monthRank(b, schema.monthType);
         return d !== 0 ? d : a.localeCompare(b, "it");
       });
 
-      const rows = Array.from(rowMap.values()).sort((a,b) => {
-        const d = rowRank(a.name) - rowRank(b.name);
-        return d !== 0 ? d : a.firstIndex - b.firstIndex;
+      const rows = Array.from(rowMap.values()).sort((a, b) => {
+        const ra = rowRank(a.name);
+        const rb = rowRank(b.name);
+
+        if (ra !== rb) return ra - rb;
+
+        /*
+          Per gruppi non presenti nell'ordine noto,
+          conserviamo l'ordine con cui SAS li invia.
+        */
+        return a.firstIndex - b.firstIndex;
       });
 
       return { months, rows };
     }
 
-    function buildTable(matrix) {
+    function buildTable(matrix, schema) {
       const { months, rows } = matrix;
       const table = document.createElement("table");
 
       const colgroup = document.createElement("colgroup");
+
       const labelCol = document.createElement("col");
-      labelCol.style.width = "26%";
+      labelCol.style.width = "16%";
       colgroup.appendChild(labelCol);
 
       const numericCols = months.length + 1;
-      const numericWidth = 74 / numericCols;
+      const numericWidth = 84 / Math.max(numericCols, 1);
 
       for (let i = 0; i < numericCols; i++) {
         const col = document.createElement("col");
@@ -281,13 +430,17 @@
 
       const thead = document.createElement("thead");
       const hr = document.createElement("tr");
-      hr.appendChild(createCell("th", "CARTELLINO"));
+
+      hr.appendChild(createCell("th", schema.rowLabel));
 
       months.forEach(month => {
-        hr.appendChild(createCell("th", monthDisplayName(month)));
+        hr.appendChild(
+          createCell("th", monthDisplay(month, schema.monthType))
+        );
       });
 
       hr.appendChild(createCell("th", "Totale"));
+
       thead.appendChild(hr);
       table.appendChild(thead);
 
@@ -329,11 +482,16 @@
 
       const totalRow = document.createElement("tr");
       totalRow.className = "total-row";
+
       totalRow.appendChild(createCell("td", "Totale", "row-label"));
 
       months.forEach(month => {
         totalRow.appendChild(
-          createCell("td", formatInteger(columnTotals.get(month) || 0), "number-cell")
+          createCell(
+            "td",
+            formatInteger(columnTotals.get(month) || 0),
+            "number-cell"
+          )
         );
       });
 
@@ -350,27 +508,59 @@
     function fitTable() {
       const host = document.getElementById("host");
       const table = lastRenderedTable;
+
       if (!host || !table) return;
 
       const width = Math.max(host.clientWidth, 1);
       const height = Math.max(host.clientHeight, 1);
-      const columnCount = Math.max(table.querySelectorAll("thead th").length, 1);
-      const rowCount = Math.max(table.querySelectorAll("tr").length, 1);
 
-      const targetRowHeight = Math.max((height - 2) / rowCount, 1);
-      const fontFromWidth = width / (columnCount * 10.2);
-      const fontFromHeight = targetRowHeight * 0.58;
-
-      const bodyFont = Math.max(9, Math.min(15, fontFromWidth, fontFromHeight));
-      const headerFont = Math.max(8.5, Math.min(14, bodyFont * 0.96));
-      const verticalPadding = Math.max(
-        0,
-        Math.min(5, (targetRowHeight - bodyFont * 1.05) / 2)
+      const columnCount = Math.max(
+        table.querySelectorAll("thead th").length,
+        1
       );
 
-      document.documentElement.style.setProperty("--body-font", bodyFont.toFixed(2) + "px");
-      document.documentElement.style.setProperty("--header-font", headerFont.toFixed(2) + "px");
-      document.documentElement.style.setProperty("--cell-py", verticalPadding.toFixed(2) + "px");
+      const rowCount = Math.max(
+        table.querySelectorAll("tr").length,
+        1
+      );
+
+      const targetRowHeight = Math.max((height - 2) / rowCount, 1);
+
+      const fontFromWidth = width / (columnCount * 8.8);
+      const fontFromHeight = targetRowHeight * 0.58;
+
+      const bodyFont = Math.max(
+        9,
+        Math.min(15, fontFromWidth, fontFromHeight)
+      );
+
+      const headerFont = Math.max(
+        8.5,
+        Math.min(14, bodyFont * 0.96)
+      );
+
+      const verticalPadding = Math.max(
+        0,
+        Math.min(
+          5,
+          (targetRowHeight - bodyFont * 1.05) / 2
+        )
+      );
+
+      document.documentElement.style.setProperty(
+        "--body-font",
+        bodyFont.toFixed(2) + "px"
+      );
+
+      document.documentElement.style.setProperty(
+        "--header-font",
+        headerFont.toFixed(2) + "px"
+      );
+
+      document.documentElement.style.setProperty(
+        "--cell-py",
+        verticalPadding.toFixed(2) + "px"
+      );
 
       table.querySelectorAll("tr").forEach(row => {
         row.style.height = targetRowHeight.toFixed(2) + "px";
@@ -380,16 +570,16 @@
     function render(message) {
       if (!message || !Array.isArray(message.data) || !Array.isArray(message.columns)) return;
 
-      const monthIndex = findColumnIndex(message.columns, ["MESE_NOME", "MESE NOME"]);
-      const rowIndex = findColumnIndex(message.columns, ["CARTELLINO"]);
-      const valueIndex = findColumnIndex(message.columns, ["RISULTATO_METALLO", "RISULTATO METALLO"]);
+      const schema = detectSchema(message.columns);
 
-      if (monthIndex < 0 || rowIndex < 0 || valueIndex < 0) {
-        showStatus("Mancano i campi richiesti: MESE_NOME, CARTELLINO e RISULTATO_METALLO.");
+      if (!schema) {
+        showStatus(
+          "Schema dati non riconosciuto. Verifica MESE_KEY/MESE_NOME, CARTELLINO/GRUPPO_ARTICOLO e la misura assegnata."
+        );
         return;
       }
 
-      const matrix = buildMatrix(message, monthIndex, rowIndex, valueIndex);
+      const matrix = buildMatrix(message, schema);
 
       if (!matrix.months.length || !matrix.rows.length) {
         showStatus("Nessun dato da visualizzare.");
@@ -399,7 +589,8 @@
       const host = document.getElementById("host");
       host.innerHTML = "";
 
-      const table = buildTable(matrix);
+      const table = buildTable(matrix, schema);
+
       host.appendChild(table);
       lastRenderedTable = table;
 
@@ -411,8 +602,11 @@
 
     function onMessage(event) {
       if (!event || !event.data) return;
+
       const message = event.data;
+
       if (!Array.isArray(message.data) || !Array.isArray(message.columns)) return;
+
       render(message);
     }
 
