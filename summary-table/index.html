@@ -6,6 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
+
   <title>SAS VA Summary Table</title>
 
   <style>
@@ -14,6 +15,7 @@
       --bg: #f7e9e4;
       --grid: #ead8d2;
       --text: #111;
+
       --body-font: 14px;
       --header-font: 13.5px;
       --cell-py: 3px;
@@ -68,6 +70,8 @@
       border-right: 1px solid rgba(255,255,255,0.28);
     }
 
+    thead th:last-child { border-right: 0; }
+
     tbody td {
       background: var(--bg);
       font-size: var(--body-font);
@@ -111,24 +115,19 @@
 </head>
 
 <body>
-  <div id="host"><div id="status"></div></div>
+  <div id="host">
+    <div id="status"></div>
+  </div>
 
   <script>
     "use strict";
 
     /*
-      Un solo componente per le tre tabelle METAL_SUMMARY_ARTICLE.
+      Un solo componente per le tabelle METAL_SUMMARY_ARTICLE /
+      METAL_SUMMARY_CARTELLINO.
 
-      Schema 1:
-      GRUPPO_ARTICOLO | TON | % | % ANNO PREC
-
-      Schema 2:
-      GRUPPO_ARTICOLO | TON | RIPR_ANNO_PREC | DELTA_TON
-
-      Schema 3:
-      CARTELLINO | TON | % MESE | ANNO PREC | % ANNO PREC
-
-      Nessuna misura viene ricalcolata: i valori sono solo formattati.
+      Accetta sia i nomi originali delle misure sia le nuove
+      misure corrette create in SAS Visual Analytics.
     */
 
     let lastRenderedTable = null;
@@ -137,66 +136,167 @@
       {
         id: "article_share",
         columns: [
-          { aliases: ["GRUPPO_ARTICOLO"], label: "GRUPPO_ARTICOLO", type: "category", width: 40 },
-          { aliases: ["TON"], label: "TON", type: "number", width: 20 },
-          { aliases: ["% CORRETTA"], label: "%", type: "percent", width: 20 },
-          { aliases: ["% ANNO PREC", "%_ANNO_PREC"], label: "% ANNO PREC", type: "percent", width: 20 }
+          {
+            aliases: ["GRUPPO_ARTICOLO", "GRUPPO ARTICOLO"],
+            label: "GRUPPO_ARTICOLO",
+            type: "category",
+            width: 40
+          },
+          {
+            aliases: ["TON", "TON_MESE"],
+            label: "TON",
+            type: "number",
+            width: 20
+          },
+          {
+            aliases: ["% CORRETTA", "%", "PERC_MESE", "PERC_MESE1"],
+            label: "%",
+            type: "percent",
+            width: 20
+          },
+          {
+            aliases: [
+              "% ANNO PREC CORRETTA",
+              "% ANNO PREC",
+              "%_ANNO_PREC",
+              "PERC_ANNO_PREC"
+            ],
+            label: "% ANNO PREC",
+            type: "percent",
+            width: 20
+          }
         ]
       },
       {
         id: "article_delta",
         columns: [
-          { aliases: ["GRUPPO_ARTICOLO"], label: "GRUPPO_ARTICOLO", type: "category", width: 40 },
-          { aliases: ["TON"], label: "TON", type: "number", width: 20 },
-          { aliases: ["RIPR_ANNO_PREC", "RIPR ANNO PREC"], label: "RIPR_ANNO_PREC", type: "number", width: 20 },
-          { aliases: ["DELTA_TON", "DELTA TON"], label: "DELTA_TON", type: "number", width: 20 }
+          {
+            aliases: ["GRUPPO_ARTICOLO", "GRUPPO ARTICOLO"],
+            label: "GRUPPO_ARTICOLO",
+            type: "category",
+            width: 40
+          },
+          {
+            aliases: ["TON", "TON_MESE"],
+            label: "TON",
+            type: "number",
+            width: 20
+          },
+          {
+            aliases: ["RIPR_ANNO_PREC", "RIPR ANNO PREC"],
+            label: "RIPR_ANNO_PREC",
+            type: "number",
+            width: 20
+          },
+          {
+            aliases: ["DELTA_TON", "DELTA TON"],
+            label: "DELTA_TON",
+            type: "number",
+            width: 20
+          }
         ]
       },
       {
         id: "cartellino_compare",
         columns: [
-          { aliases: ["CARTELLINO"], label: "CARTELLINO", type: "category", width: 28 },
-          { aliases: ["TON"], label: "TON", type: "number", width: 18 },
-          { aliases: ["% MESE", "%_MESE"], label: "% MESE", type: "percent", width: 18 },
-          { aliases: ["ANNO PREC", "ANNO_PREC"], label: "ANNO PREC", type: "number", width: 18 },
-          { aliases: ["% ANNO PREC", "%_ANNO_PREC"], label: "% ANNO PREC", type: "percent", width: 18 }
+          {
+            aliases: ["CARTELLINO"],
+            label: "CARTELLINO",
+            type: "category",
+            width: 28
+          },
+          {
+            aliases: ["TON"],
+            label: "TON",
+            type: "number",
+            width: 18
+          },
+          {
+            aliases: ["% MESE CORRETTA", "% MESE", "%_MESE", "PERC_TON"],
+            label: "% MESE",
+            type: "percent",
+            width: 18
+          },
+          {
+            aliases: ["ANNO PREC", "ANNO_PREC", "ANNO_PREC_FIX"],
+            label: "ANNO PREC",
+            type: "number",
+            width: 18
+          },
+          {
+            aliases: [
+              "% ANNO PREC CORRETTA",
+              "% ANNO PREC",
+              "%_ANNO_PREC",
+              "PERC_ANNO_PREC"
+            ],
+            label: "% ANNO PREC",
+            type: "percent",
+            width: 18
+          }
         ]
       }
     ];
 
     function normalizeName(value) {
-      return String(value ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+      return String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, " ");
     }
 
     function candidateNames(column) {
       const col = column || {};
-      return [col.label, col.name, col.dataItemName, col.dataItemLabel]
+
+      return [
+        col.label,
+        col.name,
+        col.dataItemName,
+        col.dataItemLabel
+      ]
         .filter(v => v !== undefined && v !== null)
         .map(normalizeName);
     }
 
     function findColumnIndex(columns, aliases) {
       const wanted = aliases.map(normalizeName);
+
       for (let i = 0; i < columns.length; i++) {
         const names = candidateNames(columns[i]);
-        if (names.some(name => wanted.includes(name))) return i;
+
+        if (names.some(name => wanted.includes(name))) {
+          return i;
+        }
       }
+
       return -1;
     }
 
     function detectSchema(columns) {
       for (const schema of SCHEMAS) {
-        const indexes = schema.columns.map(def => findColumnIndex(columns, def.aliases));
-        if (indexes.every(index => index >= 0)) return { schema, indexes };
+        const indexes = schema.columns.map(def =>
+          findColumnIndex(columns, def.aliases)
+        );
+
+        if (indexes.every(index => index >= 0)) {
+          return { schema, indexes };
+        }
       }
+
       return null;
     }
 
     function parseNumber(value) {
-      if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
-      if (value === null || value === undefined) return NaN;
+      if (typeof value === "number") {
+        return Number.isFinite(value) ? value : NaN;
+      }
+
+      if (value === null || value === undefined) {
+        return NaN;
+      }
 
       let text = String(value).trim();
+
       if (!text) return NaN;
 
       text = text.replace(/\s/g, "").replace(/%/g, "");
@@ -216,9 +316,15 @@
     }
 
     function formatInteger(value) {
-      if (value === null || value === undefined || value === "") return "";
+      if (value === null || value === undefined || value === "") {
+        return "";
+      }
+
       const number = parseNumber(value);
-      if (!Number.isFinite(number)) return String(value);
+
+      if (!Number.isFinite(number)) {
+        return String(value);
+      }
 
       return new Intl.NumberFormat("it-IT", {
         minimumFractionDigits: 0,
@@ -227,14 +333,19 @@
     }
 
     function formatPercent(value) {
-      if (value === null || value === undefined || value === "") return "";
+      if (value === null || value === undefined || value === "") {
+        return "";
+      }
 
       if (typeof value === "string" && value.includes("%")) {
         return value.trim();
       }
 
       const number = parseNumber(value);
-      if (!Number.isFinite(number)) return String(value);
+
+      if (!Number.isFinite(number)) {
+        return String(value);
+      }
 
       return new Intl.NumberFormat("it-IT", {
         style: "percent",
@@ -252,36 +363,49 @@
     function showStatus(text) {
       const host = document.getElementById("host");
       host.innerHTML = "";
+
       const status = document.createElement("div");
       status.id = "status";
       status.className = "visible";
       status.textContent = text;
+
       host.appendChild(status);
       lastRenderedTable = null;
     }
 
     function createCell(tag, text, className = "") {
       const cell = document.createElement(tag);
-      if (className) cell.className = className;
+
+      if (className) {
+        cell.className = className;
+      }
+
       cell.textContent = text;
       return cell;
     }
 
     function buildTable(message, detected) {
       const { schema, indexes } = detected;
+
       const table = document.createElement("table");
 
       const colgroup = document.createElement("colgroup");
+
       schema.columns.forEach(def => {
         const col = document.createElement("col");
         col.style.width = def.width + "%";
         colgroup.appendChild(col);
       });
+
       table.appendChild(colgroup);
 
       const thead = document.createElement("thead");
       const headRow = document.createElement("tr");
-      schema.columns.forEach(def => headRow.appendChild(createCell("th", def.label)));
+
+      schema.columns.forEach(def => {
+        headRow.appendChild(createCell("th", def.label));
+      });
+
       thead.appendChild(headRow);
       table.appendChild(thead);
 
@@ -289,18 +413,26 @@
 
       message.data.forEach(row => {
         const values = indexes.map(index => row[index]);
+
         const hasContent = values.some(value =>
           value !== null &&
           value !== undefined &&
           String(value).trim() !== ""
         );
+
         if (!hasContent) return;
 
         const tr = document.createElement("tr");
 
         schema.columns.forEach((def, columnIndex) => {
-          const text = formatValue(values[columnIndex], def.type);
-          const className = def.type === "category" ? "category-cell" : "number-cell";
+          const rawValue = values[columnIndex];
+          const text = formatValue(rawValue, def.type);
+
+          const className =
+            def.type === "category"
+              ? "category-cell"
+              : "number-cell";
+
           tr.appendChild(createCell("td", text, className));
         });
 
@@ -308,15 +440,18 @@
       });
 
       table.appendChild(tbody);
+
       return table;
     }
 
     function fitTable() {
       const host = document.getElementById("host");
       const table = lastRenderedTable;
+
       if (!host || !table) return;
 
       const height = Math.max(host.clientHeight, 1);
+
       const rows = table.querySelectorAll("tr");
       const rowCount = Math.max(rows.length, 1);
 
@@ -334,9 +469,20 @@
         )
       );
 
-      document.documentElement.style.setProperty("--body-font", bodyFont + "px");
-      document.documentElement.style.setProperty("--header-font", headerFont + "px");
-      document.documentElement.style.setProperty("--cell-py", verticalPadding.toFixed(2) + "px");
+      document.documentElement.style.setProperty(
+        "--body-font",
+        bodyFont + "px"
+      );
+
+      document.documentElement.style.setProperty(
+        "--header-font",
+        headerFont + "px"
+      );
+
+      document.documentElement.style.setProperty(
+        "--cell-py",
+        verticalPadding.toFixed(2) + "px"
+      );
 
       rows.forEach(row => {
         row.style.height = targetRowHeight.toFixed(2) + "px";
@@ -344,12 +490,24 @@
     }
 
     function render(message) {
-      if (!message || !Array.isArray(message.data) || !Array.isArray(message.columns)) return;
+      if (
+        !message ||
+        !Array.isArray(message.data) ||
+        !Array.isArray(message.columns)
+      ) {
+        return;
+      }
 
       const detected = detectSchema(message.columns);
 
       if (!detected) {
-        showStatus("Schema dati non riconosciuto. Verifica i Ruoli dati assegnati all'oggetto.");
+        const received = message.columns
+          .map(col => col.label || col.name || col.dataItemName || col.dataItemLabel || "?")
+          .join(" | ");
+
+        showStatus(
+          "Schema dati non riconosciuto. Campi ricevuti: " + received
+        );
         return;
       }
 
@@ -374,8 +532,16 @@
 
     function onMessage(event) {
       if (!event || !event.data) return;
+
       const message = event.data;
-      if (!Array.isArray(message.data) || !Array.isArray(message.columns)) return;
+
+      if (
+        !Array.isArray(message.data) ||
+        !Array.isArray(message.columns)
+      ) {
+        return;
+      }
+
       render(message);
     }
 
