@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Metal Result by Month</title>
+
+  <style>
+    :root {
+      --red: #d71920;
+      --bg: #f7e9e4;
+      --bg-total: #f3d5cf;
+      --grid: #ead8d2;
+      --text: #111;
+      --body-font: 13px;
+      --header-font: 12.5px;
+      --cell-py: 4px;
+      --cell-px: 4px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+    }
+
+    #host {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    table {
+      width: 100%;
+      height: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      background: var(--bg);
+    }
+
+    th, td {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: middle;
+      border-bottom: 1px solid var(--grid);
+      border-right: 1px solid rgba(255,255,255,0.18);
+      padding: var(--cell-py) var(--cell-px);
+      line-height: 1.05;
+    }
+
+    th:last-child, td:last-child { border-right: 0; }
+
+    thead th {
+      background: var(--red);
+      color: #fff;
+      font-size: var(--header-font);
+      font-weight: 700;
+      text-align: center;
+    }
+
+    tbody td {
+      background: var(--bg);
+      font-size: var(--body-font);
+    }
+
+    td.row-label {
+      background: var(--red);
+      color: #fff;
+      font-weight: 700;
+      text-align: left;
+    }
+
+    td.number-cell {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    td.total-cell {
+      background: var(--bg-total);
+      font-weight: 700;
+    }
+
+    tr.total-row td {
+      background: var(--red);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    #status {
+      display: none;
+      width: 100%;
+      height: 100%;
+      padding: 12px;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #666;
+      background: var(--bg);
+      font-size: 13px;
+    }
+
+    #status.visible { display: flex; }
+
+    @media (max-width: 1100px) {
+      :root { --cell-px: 2px; }
+    }
+
+    @media (max-width: 800px) {
+      :root { --cell-px: 1px; }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="host"><div id="status"></div></div>
+
+  <script>
+    "use strict";
+
+    const MONTH_ORDER = [
+      "GENNAIO","FEBBRAIO","MARZO","APRILE","MAGGIO","GIUGNO",
+      "LUGLIO","AGOSTO","SETTEMBRE","OTTOBRE","NOVEMBRE","DICEMBRE"
+    ];
+
+    const ROW_ORDER = ["DHP","ETP","OT X","OTTONE 66","SIMILORO"];
+
+    let lastRenderedTable = null;
+
+    function normalizeName(value) {
+      return String(value ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+    }
+
+    function candidateNames(column) {
+      const col = column || {};
+      return [col.label, col.name, col.dataItemName, col.dataItemLabel]
+        .filter(v => v !== undefined && v !== null)
+        .map(normalizeName);
+    }
+
+    function findColumnIndex(columns, aliases) {
+      const wanted = aliases.map(normalizeName);
+      for (let i = 0; i < columns.length; i++) {
+        const names = candidateNames(columns[i]);
+        if (names.some(name => wanted.includes(name))) return i;
+      }
+      return -1;
+    }
+
+    function parseNumber(value) {
+      if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+      if (value === null || value === undefined) return NaN;
+
+      let text = String(value).trim();
+      if (!text) return NaN;
+
+      text = text.replace(/\s/g, "");
+
+      if (text.includes(",") && text.includes(".")) {
+        if (text.lastIndexOf(",") > text.lastIndexOf(".")) {
+          text = text.replace(/\./g, "").replace(",", ".");
+        } else {
+          text = text.replace(/,/g, "");
+        }
+      } else if (text.includes(",")) {
+        text = text.replace(",", ".");
+      }
+
+      const number = Number(text);
+      return Number.isFinite(number) ? number : NaN;
+    }
+
+    function formatInteger(value) {
+      if (!Number.isFinite(value)) return "";
+      return new Intl.NumberFormat("it-IT", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+      }).format(value);
+    }
+
+    function monthRank(month) {
+      const i = MONTH_ORDER.indexOf(normalizeName(month));
+      return i === -1 ? 999 : i;
+    }
+
+    function rowRank(name) {
+      const i = ROW_ORDER.indexOf(normalizeName(name));
+      return i === -1 ? 999 : i;
+    }
+
+    function monthDisplayName(month) {
+      const text = String(month ?? "").trim();
+      return text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : "";
+    }
+
+    function showStatus(text) {
+      const host = document.getElementById("host");
+      host.innerHTML = "";
+      const status = document.createElement("div");
+      status.id = "status";
+      status.className = "visible";
+      status.textContent = text;
+      host.appendChild(status);
+      lastRenderedTable = null;
+    }
+
+    function createCell(tag, text, className = "") {
+      const cell = document.createElement(tag);
+      if (className) cell.className = className;
+      cell.textContent = text;
+      return cell;
+    }
+
+    function buildMatrix(message, monthIndex, rowIndex, valueIndex) {
+      const rowMap = new Map();
+      const monthSet = new Set();
+
+      message.data.forEach((row, sourceIndex) => {
+        const month = String(row[monthIndex] ?? "").trim();
+        const rowName = String(row[rowIndex] ?? "").trim();
+        const value = parseNumber(row[valueIndex]);
+
+        if (!month || !rowName || !Number.isFinite(value)) return;
+
+        const m = normalizeName(month);
+        const r = normalizeName(rowName);
+        monthSet.add(m);
+
+        if (!rowMap.has(r)) {
+          rowMap.set(r, { name: rowName, firstIndex: sourceIndex, values: new Map() });
+        }
+
+        const item = rowMap.get(r);
+        item.values.set(m, (item.values.get(m) || 0) + value);
+      });
+
+      const months = Array.from(monthSet).sort((a,b) => {
+        const d = monthRank(a) - monthRank(b);
+        return d !== 0 ? d : a.localeCompare(b, "it");
+      });
+
+      const rows = Array.from(rowMap.values()).sort((a,b) => {
+        const d = rowRank(a.name) - rowRank(b.name);
+        return d !== 0 ? d : a.firstIndex - b.firstIndex;
+      });
+
+      return { months, rows };
+    }
+
+    function buildTable(matrix) {
+      const { months, rows } = matrix;
+      const table = document.createElement("table");
+
+      const colgroup = document.createElement("colgroup");
+      const labelCol = document.createElement("col");
+      labelCol.style.width = "26%";
+      colgroup.appendChild(labelCol);
+
+      const numericCols = months.length + 1;
+      const numericWidth = 74 / numericCols;
+
+      for (let i = 0; i < numericCols; i++) {
+        const col = document.createElement("col");
+        col.style.width = numericWidth + "%";
+        colgroup.appendChild(col);
+      }
+
+      table.appendChild(colgroup);
+
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      hr.appendChild(createCell("th", "CARTELLINO"));
+
+      months.forEach(month => {
+        hr.appendChild(createCell("th", monthDisplayName(month)));
+      });
+
+      hr.appendChild(createCell("th", "Totale"));
+      thead.appendChild(hr);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      const columnTotals = new Map(months.map(m => [m, 0]));
+      let grandTotal = 0;
+
+      rows.forEach(item => {
+        const tr = document.createElement("tr");
+        tr.appendChild(createCell("td", item.name, "row-label"));
+
+        let rowTotal = 0;
+
+        months.forEach(month => {
+          const value = item.values.get(month);
+
+          if (Number.isFinite(value)) {
+            rowTotal += value;
+            columnTotals.set(month, columnTotals.get(month) + value);
+          }
+
+          tr.appendChild(
+            createCell(
+              "td",
+              Number.isFinite(value) ? formatInteger(value) : "—",
+              "number-cell"
+            )
+          );
+        });
+
+        grandTotal += rowTotal;
+
+        tr.appendChild(
+          createCell("td", formatInteger(rowTotal), "number-cell total-cell")
+        );
+
+        tbody.appendChild(tr);
+      });
+
+      const totalRow = document.createElement("tr");
+      totalRow.className = "total-row";
+      totalRow.appendChild(createCell("td", "Totale", "row-label"));
+
+      months.forEach(month => {
+        totalRow.appendChild(
+          createCell("td", formatInteger(columnTotals.get(month) || 0), "number-cell")
+        );
+      });
+
+      totalRow.appendChild(
+        createCell("td", formatInteger(grandTotal), "number-cell")
+      );
+
+      tbody.appendChild(totalRow);
+      table.appendChild(tbody);
+
+      return table;
+    }
+
+    function fitTable() {
+      const host = document.getElementById("host");
+      const table = lastRenderedTable;
+      if (!host || !table) return;
+
+      const width = Math.max(host.clientWidth, 1);
+      const height = Math.max(host.clientHeight, 1);
+      const columnCount = Math.max(table.querySelectorAll("thead th").length, 1);
+      const rowCount = Math.max(table.querySelectorAll("tr").length, 1);
+
+      const targetRowHeight = Math.max((height - 2) / rowCount, 1);
+      const fontFromWidth = width / (columnCount * 10.2);
+      const fontFromHeight = targetRowHeight * 0.58;
+
+      const bodyFont = Math.max(9, Math.min(15, fontFromWidth, fontFromHeight));
+      const headerFont = Math.max(8.5, Math.min(14, bodyFont * 0.96));
+      const verticalPadding = Math.max(
+        0,
+        Math.min(5, (targetRowHeight - bodyFont * 1.05) / 2)
+      );
+
+      document.documentElement.style.setProperty("--body-font", bodyFont.toFixed(2) + "px");
+      document.documentElement.style.setProperty("--header-font", headerFont.toFixed(2) + "px");
+      document.documentElement.style.setProperty("--cell-py", verticalPadding.toFixed(2) + "px");
+
+      table.querySelectorAll("tr").forEach(row => {
+        row.style.height = targetRowHeight.toFixed(2) + "px";
+      });
+    }
+
+    function render(message) {
+      if (!message || !Array.isArray(message.data) || !Array.isArray(message.columns)) return;
+
+      const monthIndex = findColumnIndex(message.columns, ["MESE_NOME", "MESE NOME"]);
+      const rowIndex = findColumnIndex(message.columns, ["CARTELLINO"]);
+      const valueIndex = findColumnIndex(message.columns, ["RISULTATO_METALLO", "RISULTATO METALLO"]);
+
+      if (monthIndex < 0 || rowIndex < 0 || valueIndex < 0) {
+        showStatus("Mancano i campi richiesti: MESE_NOME, CARTELLINO e RISULTATO_METALLO.");
+        return;
+      }
+
+      const matrix = buildMatrix(message, monthIndex, rowIndex, valueIndex);
+
+      if (!matrix.months.length || !matrix.rows.length) {
+        showStatus("Nessun dato da visualizzare.");
+        return;
+      }
+
+      const host = document.getElementById("host");
+      host.innerHTML = "";
+
+      const table = buildTable(matrix);
+      host.appendChild(table);
+      lastRenderedTable = table;
+
+      requestAnimationFrame(() => {
+        fitTable();
+        requestAnimationFrame(fitTable);
+      });
+    }
+
+    function onMessage(event) {
+      if (!event || !event.data) return;
+      const message = event.data;
+      if (!Array.isArray(message.data) || !Array.isArray(message.columns)) return;
+      render(message);
+    }
+
+    window.addEventListener("message", onMessage, false);
+    window.addEventListener("resize", fitTable);
+
+    if ("ResizeObserver" in window) {
+      const observer = new ResizeObserver(fitTable);
+      observer.observe(document.getElementById("host"));
+    }
+  </script>
+</body>
+</html>
