@@ -190,9 +190,7 @@
       group:      ["CARTELLINO"],
       article:    ["ARTICOLO"],
       loaded:     ["TON_CARICATE", "TON CARICATE"],
-      percentage:["%", "PERCENTUALE"],
       target:     ["TON_TARGET", "TON TARGET"],
-      targetPct:  ["%_TARGET", "% TARGET", "%TARGET"],
       delta:      ["ACTUAL-TARGET", "ACTUAL_TARGET", "ACTUAL TARGET"]
     };
 
@@ -259,6 +257,9 @@
         }
       } else if (text.includes(",")) {
         text = text.replace(",", ".");
+      } else if (/^-?\d{1,3}(\.\d{3})+$/.test(text)) {
+        // Formato italiano senza decimali, per esempio "1.234".
+        text = text.replace(/\./g, "");
       }
 
       const number = Number(text);
@@ -266,29 +267,16 @@
     }
 
     /*
-      Converte una percentuale in "punti percentuali".
-      Esempi:
-        0.42    -> 42
-        "42%"   -> 42
-        42      -> 42
-        1.2     -> 120   (tipico valore SAS per 120%)
+      Le percentuali sono rapporti fra tonnellate aggregate nel cartellino.
+      Non usare/sommare le percentuali mensili passate da Visual Analytics:
+      quelle percentuali non sono additive quando sono selezionati piu' mesi.
+      Se il denominatore e' zero, la percentuale e' non disponibile.
     */
-    function toPercentPoints(value) {
-      if (typeof value === "string" && value.includes("%")) {
-        return parseItalianNumber(value);
-      }
-
-      const number = parseItalianNumber(value);
-
-      if (!Number.isFinite(number)) {
+    function percentageOf(part, total) {
+      if (!Number.isFinite(part) || !Number.isFinite(total) || total === 0) {
         return NaN;
       }
-
-      if (Math.abs(number) <= 1.5) {
-        return number * 100;
-      }
-
-      return number;
+      return (part / total) * 100;
     }
 
     function formatNumber(value) {
@@ -333,9 +321,7 @@
         group:      findColumnIndex(columns, REQUIRED_COLUMNS.group),
         article:    findColumnIndex(columns, REQUIRED_COLUMNS.article),
         loaded:     findColumnIndex(columns, REQUIRED_COLUMNS.loaded),
-        percentage: findColumnIndex(columns, REQUIRED_COLUMNS.percentage),
         target:     findColumnIndex(columns, REQUIRED_COLUMNS.target),
-        targetPct:  findColumnIndex(columns, REQUIRED_COLUMNS.targetPct),
         delta:      findColumnIndex(columns, REQUIRED_COLUMNS.delta)
       };
     }
@@ -360,9 +346,7 @@
         const key = normalizeName(group) + "||" + normalizeName(article);
 
         const loaded = parseItalianNumber(row[indexes.loaded]);
-        const percentage = toPercentPoints(row[indexes.percentage]);
         const target = parseItalianNumber(row[indexes.target]);
-        const targetPct = toPercentPoints(row[indexes.targetPct]);
         const delta = parseItalianNumber(row[indexes.delta]);
 
         if (!aggregate.has(key)) {
@@ -371,9 +355,7 @@
             article,
             firstRowIndex: rowIndex,
             loaded: 0,
-            percentage: 0,
             target: 0,
-            targetPct: 0,
             delta: 0
           });
         }
@@ -381,9 +363,7 @@
         const item = aggregate.get(key);
 
         if (Number.isFinite(loaded)) item.loaded += loaded;
-        if (Number.isFinite(percentage)) item.percentage += percentage;
         if (Number.isFinite(target)) item.target += target;
-        if (Number.isFinite(targetPct)) item.targetPct += targetPct;
         if (Number.isFinite(delta)) item.delta += delta;
       });
 
@@ -427,16 +407,12 @@
     function sumGroupRows(rows) {
       return rows.reduce((acc, row) => {
         acc.loaded += row.loaded;
-        acc.percentage += row.percentage;
         acc.target += row.target;
-        acc.targetPct += row.targetPct;
         acc.delta += row.delta;
         return acc;
       }, {
         loaded: 0,
-        percentage: 0,
         target: 0,
-        targetPct: 0,
         delta: 0
       });
     }
@@ -494,6 +470,10 @@
       const tbody = document.createElement("tbody");
 
       groups.forEach(group => {
+        // Denominatori calcolati sui dati filtrati arrivati da Visual Analytics.
+        // L'anno e i mesi selezionati si applicano a tutte le somme.
+        const total = sumGroupRows(group.rows);
+
         group.rows.forEach((item, rowIndex) => {
           const tr = document.createElement("tr");
 
@@ -517,7 +497,7 @@
           );
 
           tr.appendChild(
-            createCell("td", formatPercent(item.percentage), "number-cell")
+            createCell("td", formatPercent(percentageOf(item.loaded, total.loaded)), "number-cell")
           );
 
           tr.appendChild(
@@ -525,7 +505,7 @@
           );
 
           tr.appendChild(
-            createCell("td", formatPercent(item.targetPct), "number-cell")
+            createCell("td", formatPercent(percentageOf(item.target, total.target)), "number-cell")
           );
 
           tr.appendChild(
@@ -534,8 +514,6 @@
 
           tbody.appendChild(tr);
         });
-
-        const total = sumGroupRows(group.rows);
 
         const subtotalRow = document.createElement("tr");
         subtotalRow.className = "subtotal-row";
@@ -555,7 +533,7 @@
         );
 
         subtotalRow.appendChild(
-          createCell("td", formatPercent(total.percentage), "number-cell")
+          createCell("td", formatPercent(percentageOf(total.loaded, total.loaded)), "number-cell")
         );
 
         subtotalRow.appendChild(
@@ -563,7 +541,7 @@
         );
 
         subtotalRow.appendChild(
-          createCell("td", formatPercent(total.targetPct), "number-cell")
+          createCell("td", formatPercent(percentageOf(total.target, total.target)), "number-cell")
         );
 
         subtotalRow.appendChild(
@@ -650,7 +628,7 @@
 
       if (!hasAllIndexes(indexes)) {
         showStatus(
-          "Mancano uno o più campi richiesti: CARTELLINO, ARTICOLO, TON_CARICATE, %, TON_TARGET, %_TARGET, ACTUAL-TARGET."
+          "Mancano uno o più campi richiesti: CARTELLINO, ARTICOLO, TON_CARICATE, TON_TARGET, ACTUAL-TARGET. Le misure % e %_TARGET non servono più."
         );
         return;
       }
